@@ -1,7 +1,9 @@
-// Sample run-helloworld is a minimal Cloud Run service.
 package main
 
+// strava activity webhook subscription callback endpoint
+
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -10,7 +12,7 @@ import (
 
 func main() {
 	log.Print("starting swc athlete event receiver server...")
-	http.HandleFunc("/swc/receiver", handler)
+	http.HandleFunc("/swc/receiver", SubscriptionEventHandler)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -25,8 +27,27 @@ func main() {
 	}
 }
 
-func handler(w http.ResponseWriter, r *http.Request) {
+func SubscriptionEventHandler(w http.ResponseWriter, r *http.Request) {
+	/*
+		handles events from strava webhook subscription
+		https://developers.strava.com/docs/webhooks/
+	*/
 	query := r.URL.Query()
-	log.Printf("Handling query %s", query)
-	fmt.Fprintf(w, "received %s!\n", query)
+
+	if hubMode := query.Get("hub.mode"); hubMode == "subscribe" {
+		hubChallenge := query.Get("hub.challenge")
+		hubVerifyToken := query.Get("hub.verify_token")
+		log.Printf("Handling subscription creation query (%s,%s)", hubChallenge, hubVerifyToken)
+
+		header := w.Header()
+		header.Set("Content-Type", "application/json")
+		responseBody := make(map[string]string)
+		responseBody["hub.challenge"] = hubChallenge
+		b, err := json.Marshal(responseBody)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Fprintf(w, "%s", b)
+	}
+
 }
