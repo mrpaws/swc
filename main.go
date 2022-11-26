@@ -12,9 +12,50 @@ import (
 	"os"
 )
 
+type swcVerifyToken struct {
+	value string
+	/*
+		subscriptions []string
+		accessed string
+		modified stringf
+		created string
+	*/
+}
+
+func (swcVerifyToken *swcVerifyToken) String() string {
+	return swcVerifyToken.value
+}
+
+func getSwcVerifyToken() swcVerifyToken {
+	token := os.Getenv("swcVerifyToken")
+	if token == "" {
+		log.Fatal("swcVerifyToken env var not found")
+	} else {
+		log.Print("swcVerifyToken set from env var (hidden)")
+	}
+	return swcVerifyToken{value: token}
+}
+
+func getSwcSubscriptionId() string {
+	id := os.Getenv("swcSubscriptionId")
+	if id == "" {
+		log.Print("swcSubscriptionId not found in env; none set")
+	} else {
+		log.Printf("swcSubscriptionId set from env: %s", id)
+	}
+	return id
+}
+
 func main() {
+
+	swcVerifyToken := getSwcVerifyToken()
+
+	if swcSubscriptionId := getSwcSubscriptionId(); swcSubscriptionId == "" {
+		log.Print("no subscription id set for server at startup")
+	}
+
 	log.Print("starting swc athlete event receiver server...")
-	http.HandleFunc("/swc/receiver", SubscriptionEventRouter)
+	http.HandleFunc("/swc/receiver", subscriptionEventRouter(swcVerifyToken.value))
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -23,28 +64,30 @@ func main() {
 	}
 
 	// Start HTTP server.
-	log.Printf("listening on port %s", port)
+	log.Printf("swc listening on port %s", port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func SubscriptionEventRouter(w http.ResponseWriter, r *http.Request) {
+func subscriptionEventRouter(swcVerifyToken string) http.HandlerFunc {
 	/*
 		handles events from strava webhook subscription
 		https://developers.strava.com/docs/webhooks/
 	*/
-	method := r.Method
+	return func(w http.ResponseWriter, r *http.Request) {
+		method := r.Method
 
-	// strava subscription service callback events
-	if method == "GET" {
-		SubscriptionEventHandler(w, r)
-	} else if method == "POST" {
-		AthleteActivityEventHandler(w, r)
+		// strava subscription service callback events
+		if method == "GET" {
+			subscriptionEventHandler(w, r, swcVerifyToken)
+		} else if method == "POST" {
+			athleteActivityEventHandler(w, r)
+		}
 	}
 }
 
-func SubscriptionEventHandler(w http.ResponseWriter, r *http.Request) {
+func subscriptionEventHandler(w http.ResponseWriter, r *http.Request, swcVerifyToken string) {
 	/* handler for receiving subscription event
 	i.e. creation and callback challenge / token verification
 	*/
@@ -53,21 +96,28 @@ func SubscriptionEventHandler(w http.ResponseWriter, r *http.Request) {
 	if hubMode := query.Get("hub.mode"); hubMode == "subscribe" {
 		hubChallenge := query.Get("hub.challenge")
 		hubVerifyToken := query.Get("hub.verify_token")
-		log.Printf("Handling subscription creation query (%s,%s)", hubChallenge, hubVerifyToken)
-
-		header := w.Header()
-		header.Set("Content-Type", "application/json")
-		responseBody := make(map[string]string)
-		responseBody["hub.challenge"] = hubChallenge
-		b, err := json.Marshal(responseBody)
-		if err != nil {
-			log.Fatal(err)
+		log.Printf("handling subscription creation query from (%s) with challengeL (%s)",
+			r.Host, hubChallenge)
+		if hubVerifyToken == swcVerifyToken {
+			log.Print("provided verify token matches our verify token")
+			header := w.Header()
+			header.Set("Content-Type", "application/json")
+			responseBody := make(map[string]string)
+			responseBody["hub.challenge"] = hubChallenge
+			b, err := json.Marshal(responseBody)
+			if err != nil {
+				log.Fatal(err)
+			}
+			fmt.Fprintf(w, "%s", b)
+		} else {
+			w.WriteHeader(http.StatusUnauthorized)
 		}
-		fmt.Fprintf(w, "%s", b)
+
 	}
 }
-func AthleteActivityEventHandler(w http.ResponseWriter, r *http.Request) {
-	/* handler for receiving event about athlete or activity
+
+func athleteActivityEventHandler(w http.ResponseWriter, r *http.Request) {
+	/* handlerfunc closure for receiving event about athlete or activity
 
 		   https://developers.strava.com/docs/webhooks/
 	       - 200 OK + async processing recommended;
