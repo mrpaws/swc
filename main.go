@@ -47,7 +47,6 @@ func getSwcSubscriptionId() string {
 }
 
 func main() {
-
 	swcVerifyToken := getSwcVerifyToken()
 
 	if swcSubscriptionId := getSwcSubscriptionId(); swcSubscriptionId == "" {
