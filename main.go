@@ -29,7 +29,9 @@ func (swcVerifyToken *swcVerifyToken) String() string {
 func getSwcVerifyToken() swcVerifyToken {
 	token := os.Getenv("swcVerifyToken")
 	if token == "" {
-		log.Fatal("no swcVerifyToken envVar")
+		log.Fatal("swcVerifyToken env var not found")
+	} else {
+		log.Print("swcVerifyToken set from env var (hidden)")
 	}
 	return swcVerifyToken{value: token}
 }
@@ -45,11 +47,11 @@ func getSwcSubscriptionId() string {
 }
 
 func main() {
+	swcVerifyToken := getSwcVerifyToken()
 
 	if swcSubscriptionId := getSwcSubscriptionId(); swcSubscriptionId == "" {
 		log.Print("no subscription id set for server at startup")
 	}
-	swcVerifyToken := getSwcVerifyToken()
 
 	log.Print("starting swc athlete event receiver server...")
 	http.HandleFunc("/swc/receiver", subscriptionEventRouter(swcVerifyToken.value))
@@ -77,14 +79,14 @@ func subscriptionEventRouter(swcVerifyToken string) http.HandlerFunc {
 
 		// strava subscription service callback events
 		if method == "GET" {
-			subscriptionEventHandler(w, r)
+			subscriptionEventHandler(w, r, swcVerifyToken)
 		} else if method == "POST" {
 			athleteActivityEventHandler(w, r)
 		}
 	}
 }
 
-func subscriptionEventHandler(w http.ResponseWriter, r *http.Request) {
+func subscriptionEventHandler(w http.ResponseWriter, r *http.Request, swcVerifyToken string) {
 	/* handler for receiving subscription event
 	i.e. creation and callback challenge / token verification
 	*/
@@ -93,18 +95,23 @@ func subscriptionEventHandler(w http.ResponseWriter, r *http.Request) {
 	if hubMode := query.Get("hub.mode"); hubMode == "subscribe" {
 		hubChallenge := query.Get("hub.challenge")
 		hubVerifyToken := query.Get("hub.verify_token")
-		log.Printf("Handling subscription creation query (%s,%s)", hubChallenge, hubVerifyToken)
-		//if hubVerifyToken == swcVerifyToken
-
-		header := w.Header()
-		header.Set("Content-Type", "application/json")
-		responseBody := make(map[string]string)
-		responseBody["hub.challenge"] = hubChallenge
-		b, err := json.Marshal(responseBody)
-		if err != nil {
-			log.Fatal(err)
+		log.Printf("handling subscription creation query from (%s) with challengeL (%s)",
+			r.Host, hubChallenge)
+		if hubVerifyToken == swcVerifyToken {
+			log.Print("provided verify token matches our verify token")
+			header := w.Header()
+			header.Set("Content-Type", "application/json")
+			responseBody := make(map[string]string)
+			responseBody["hub.challenge"] = hubChallenge
+			b, err := json.Marshal(responseBody)
+			if err != nil {
+				log.Fatal(err)
+			}
+			fmt.Fprintf(w, "%s", b)
+		} else {
+			w.WriteHeader(http.StatusUnauthorized)
 		}
-		fmt.Fprintf(w, "%s", b)
+
 	}
 }
 
